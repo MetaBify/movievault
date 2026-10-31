@@ -17,7 +17,13 @@
  *   popunder → after CLICK_THRESHOLD clicks, never from inside the player
  */
 
-const CLICK_THRESHOLD = 8;
+const CLICK_THRESHOLD = 6;
+
+/* Why 6 and not 8: the popunder script is 80 KB and needs a second or two to
+ * initialise after it loads, and it only opens on a click made AFTER that.
+ * Arming later means the visitor's remaining clicks land before the script is
+ * ready and nothing ever fires — which is exactly what "no ads ignited" looked
+ * like. Arming at 6 gives it time while still ignoring casual visitors. */
 const SOCIAL_DELAY = 4000;
 const FILL_TIMEOUT = 10000;
 
@@ -163,7 +169,10 @@ function armPopunder(unit) {
     clicks++;
     if (clicks >= CLICK_THRESHOLD && !fired) {
       fired = true;
-      loadScript(unit.src);
+      loadScript(unit.src, {
+        onload: () => log('popunder: script ready — it needs one MORE click to open'),
+        onerror: () => log('popunder: script failed to load'),
+      });
       log('popunder: armed after', clicks, 'clicks');
     }
   }, true);
