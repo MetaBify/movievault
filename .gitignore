@@ -1,0 +1,8 @@
+node_modules/
+.vercel/
+.DS_Store
+
+# local backups from build scripts
+*.bak
+*.bak-order
+*.bak-detail

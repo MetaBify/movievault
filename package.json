@@ -1,0 +1,11 @@
+{
+  "name": "movievault",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "TMDB catalogue + auto-probing embed sources",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js"
+  }
+}
