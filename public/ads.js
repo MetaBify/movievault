@@ -26,6 +26,12 @@ const POPUNDER = 'https://pl32120991.profitableratecpmnetwork.com/b5/99/ae/b599a
 
 const CLICK_THRESHOLD = 8;     // clicks before the popunder arms
 const SOCIAL_DELAY = 4000;     // ms before the social bar may load
+const FILL_TIMEOUT = 10000;    // how long to wait for the native banner to fill
+
+// ?adsdebug=1 keeps the slot visible and narrates what happens, so you can tell
+// "no inventory" from "blocked" from "wiring bug" on the real domain.
+const DEBUG = new URLSearchParams(location.search).has('adsdebug');
+const log = (...a) => { if (DEBUG) console.log('[ads]', ...a); };
 
 function loadScript(src, { onerror } = {}) {
   const s = document.createElement('script');
@@ -53,14 +59,39 @@ function mountNative() {
   slot.append(label, box);
 
   loadScript(NATIVE.src, {
-    onerror: () => slot.classList.remove('on'),
+    onerror: () => {
+      slot.classList.add('off');
+      console.warn('[ads] native banner script failed to load — blocked by an ad blocker or the domain');
+    },
   });
 
-  // collapse if nothing filled (ad blocker or no inventory) — no empty hole
+  log('native: container mounted, size', box.offsetWidth + 'x' + box.offsetHeight,
+      '| origin', location.origin);
+
+  // The slot stays visible with real dimensions so the network can render into
+  // it. If it is still empty after a generous window, collapse it and say why.
+  // These networks verify the embedding domain, so an unapproved origin or
+  // plain http://localhost will legitimately return nothing.
   setTimeout(() => {
-    const filled = box.childElementCount > 0 || box.innerHTML.trim().length > 0;
-    slot.classList.toggle('on', filled);
-  }, 2500);
+    const w = box.offsetWidth;
+    const h = box.offsetHeight;
+    const hasContent = box.childElementCount > 0 || box.innerHTML.trim().length > 0;
+
+    log('native: after', FILL_TIMEOUT + 'ms →', w + 'x' + h,
+        '| children', box.childElementCount, '| html len', box.innerHTML.trim().length,
+        '| filled:', hasContent);
+
+    if (hasContent) { log('native: FILLED ✓'); return; }
+
+    if (DEBUG) {
+      // leave it visible so the empty box can be inspected
+      log('native: EMPTY. Likely causes — domain not approved in the ad dashboard,');
+      log('        ad blocker, no inventory for this geo, or non-https origin.');
+      return;
+    }
+    slot.classList.add('off');
+    console.warn('[ads] native banner did not fill (blocked, no inventory, or domain not approved)');
+  }, FILL_TIMEOUT);
 }
 
 /* ------------------------------ 2. social bar ------------------------------ */
