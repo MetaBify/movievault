@@ -295,8 +295,16 @@ async function detail(type, id) {
           : seen ? '✓ watched'
           : (e.runtime ? e.runtime + 'm' : '');
         return `<button class="${cls}" data-e="${e.episode_number}" ${future ? 'disabled' : ''}>
-          <span class="epn">E${e.episode_number}</span>
-          <span class="ept">${esc(e.name || '')}</span>
+          <span class="epthumb${e.still_path ? '' : ' empty'}">
+            ${e.still_path
+              ? `<img src="${poster(e.still_path, 'w300')}" alt="" loading="lazy" decoding="async"
+                      onerror="this.parentNode.classList.add('empty');this.remove()">`
+              : '<span class="epthumb-ph">🎬</span>'}
+          </span>
+          <span class="epmain">
+            <span class="epn">E${e.episode_number}</span>
+            <span class="ept">${esc(e.name || '')}</span>
+          </span>
           <span class="epr">${esc(right)}</span>
         </button>`;
       }).join('') || '<div class="msg">No episodes.</div>';
