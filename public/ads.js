@@ -1,38 +1,63 @@
-/* ADS — three units, three different behaviours.
+/* ADS — config-driven, so more than one network can coexist without conflicts.
  *
- *   1. NATIVE BANNER   invoke.js + container div  → renders inline in the slot
- *   2. SOCIAL BAR      pl32120990...              → self-injecting floating bar
- *   3. POPUNDER        pl32120991...              → opens a tab on click
+ * Both Adsterra and this network follow the same rules (from Adsterra's own docs):
  *
- * Each gets its own timing, because lumping them together either fires the
- * popunder too early or holds back the banners that are actually harmless:
+ *   POPUNDER     one per page. Several codes on one page conflict and break.
+ *   SOCIAL BAR   one per page. Same warning.
+ *   NATIVE       one code per page; the container must be visible and have size.
+ *   STATIC       can repeat, but impressions count per unique visitor.
  *
- *   native  → immediately, in its own slot outside #view so SPA navigation
- *             doesn't destroy it and it never lands inside the player
- *   social  → once the page settles (scroll or 4s); it's an overlay, so it
- *             needs the page to exist before it can attach itself
- *   popunder→ only after CLICK_THRESHOLD real clicks, and never from inside
- *             the player
+ * So this file enforces the hard limits itself: at most ONE popunder and ONE
+ * social bar across ALL networks. Adding a second pops a console warning and
+ * refuses to load it, because two popunders don't pay double — they just break.
+ *
+ * Timing per kind (why they differ):
+ *   native   → immediately; slot is outside #view so SPA nav can't destroy it
+ *   social   → after the page settles (scroll or 4s); it is an overlay
+ *   popunder → after CLICK_THRESHOLD clicks, never from inside the player
  */
 
-const NATIVE = {
-  containerId: 'container-eb1df166ccaa6ef7da59114eeb1b0ad6',
-  src: 'https://pl32120989.profitableratecpmnetwork.com/eb1df166ccaa6ef7da59114eeb1b0ad6/invoke.js',
-};
+const CLICK_THRESHOLD = 8;
+const SOCIAL_DELAY = 4000;
+const FILL_TIMEOUT = 10000;
 
-const SOCIAL = 'https://pl32120990.profitableratecpmnetwork.com/30/5a/93/305a93a513dbd446ff4799fa5fdcc90a.js';
-
-const POPUNDER = 'https://pl32120991.profitableratecpmnetwork.com/b5/99/ae/b599aecc21374b780d2edfaa14996c54.js';
-
-const CLICK_THRESHOLD = 8;     // clicks before the popunder arms
-const SOCIAL_DELAY = 4000;     // ms before the social bar may load
-const FILL_TIMEOUT = 10000;    // how long to wait for the native banner to fill
-
-// ?adsdebug=1 keeps the slot visible and narrates what happens, so you can tell
-// "no inventory" from "blocked" from "wiring bug" on the real domain.
 const DEBUG = new URLSearchParams(location.search).has('adsdebug');
 const log = (...a) => { if (DEBUG) console.log('[ads]', ...a); };
 
+/* ------------------------------- the units -------------------------------- */
+/* Add an Adsterra unit by pasting its script URL here and removing the //.
+ * Get the snippet from Adsterra → Websites (beta.publishers.adsterra.com).
+ * Don't add a second popunder or social bar — the guard will reject it. */
+const UNITS = [
+  // --- current network (profitableratecpmnetwork) ---
+  {
+    kind: 'native',
+    containerId: 'container-eb1df166ccaa6ef7da59114eeb1b0ad6',
+    src: 'https://pl32120989.profitableratecpmnetwork.com/eb1df166ccaa6ef7da59114eeb1b0ad6/invoke.js',
+  },
+  {
+    kind: 'social',
+    src: 'https://pl32120990.profitableratecpmnetwork.com/30/5a/93/305a93a513dbd446ff4799fa5fdcc90a.js',
+  },
+  {
+    kind: 'popunder',
+    src: 'https://pl32120991.profitableratecpmnetwork.com/b5/99/ae/b599aecc21374b780d2edfaa14996c54.js',
+  },
+
+  // --- Adsterra (uncomment after signup and paste YOUR snippets) ---
+  // {
+  //   kind: 'native',
+  //   containerId: 'container-REPLACE_ME',
+  //   src: '//www.highperformanceformat.com/xxxxxxxx/invoke.js',
+  // },
+  // {
+  //   kind: 'static',
+  //   containerId: 'adsterra-banner-1',
+  //   src: '//www.highperformanceformat.com/xxxxxxxx/invoke.js',
+  // },
+];
+
+/* ------------------------------- machinery -------------------------------- */
 function loadScript(src, { onerror } = {}) {
   const s = document.createElement('script');
   s.src = src;
@@ -43,109 +68,117 @@ function loadScript(src, { onerror } = {}) {
   return s;
 }
 
-/* ----------------------------- 1. native banner ---------------------------- */
-function mountNative() {
+/** Rejects duplicate popunder/social units across every network. */
+function validate(units) {
+  const seen = {};
+  const ok = [];
+  for (const u of units) {
+    if (u.kind === 'popunder' || u.kind === 'social') {
+      seen[u.kind] = (seen[u.kind] || 0) + 1;
+      if (seen[u.kind] > 1) {
+        console.warn(`[ads] refused a second ${u.kind} — several on one page conflict. Keeping the first.`);
+        continue;
+      }
+    }
+    ok.push(u);
+  }
+  return ok;
+}
+
+/* --------------------------------- native --------------------------------- */
+function mountNative(unit) {
   const slot = document.getElementById('ad-slot');
-  if (!slot) return;
+  if (!slot || !unit.containerId) return;
 
-  const label = document.createElement('span');
-  label.className = 'ad-label';
-  label.textContent = 'Advertisement';
-
-  const box = document.createElement('div');
-  box.id = NATIVE.containerId;
+  // the slot is visible with real dimensions BEFORE the script runs — networks
+  // measure it and silently refuse to render into a 0x0 or display:none box
+  const box = document.getElementById(unit.containerId) || document.createElement('div');
+  box.id = unit.containerId;
   box.className = 'ad-box';
 
-  slot.append(label, box);
+  if (!box.isConnected) {
+    const label = document.createElement('span');
+    label.className = 'ad-label';
+    label.textContent = 'Advertisement';
+    slot.append(label, box);
+  }
 
-  loadScript(NATIVE.src, {
+  loadScript(unit.src, {
     onerror: () => {
       slot.classList.add('off');
-      console.warn('[ads] native banner script failed to load — blocked by an ad blocker or the domain');
+      console.warn('[ads] native script failed to load — blocked or domain not approved');
     },
   });
 
-  log('native: container mounted, size', box.offsetWidth + 'x' + box.offsetHeight,
-      '| origin', location.origin);
+  log('native: mounted', box.offsetWidth + 'x' + box.offsetHeight, '| origin', location.origin);
 
-  // The slot stays visible with real dimensions so the network can render into
-  // it. If it is still empty after a generous window, collapse it and say why.
-  // These networks verify the embedding domain, so an unapproved origin or
-  // plain http://localhost will legitimately return nothing.
   setTimeout(() => {
-    const w = box.offsetWidth;
-    const h = box.offsetHeight;
     const hasContent = box.childElementCount > 0 || box.innerHTML.trim().length > 0;
-
-    log('native: after', FILL_TIMEOUT + 'ms →', w + 'x' + h,
-        '| children', box.childElementCount, '| html len', box.innerHTML.trim().length,
-        '| filled:', hasContent);
-
+    log('native: after', FILL_TIMEOUT, 'ms →', box.offsetWidth + 'x' + box.offsetHeight,
+        '| children', box.childElementCount, '| filled:', hasContent);
     if (hasContent) { log('native: FILLED ✓'); return; }
-
-    if (DEBUG) {
-      // leave it visible so the empty box can be inspected
-      log('native: EMPTY. Likely causes — domain not approved in the ad dashboard,');
-      log('        ad blocker, no inventory for this geo, or non-https origin.');
-      return;
-    }
+    if (DEBUG) { log('native: EMPTY — domain approval, ad blocker, or no inventory'); return; }
     slot.classList.add('off');
     console.warn('[ads] native banner did not fill (blocked, no inventory, or domain not approved)');
   }, FILL_TIMEOUT);
 }
 
-/* ------------------------------ 2. social bar ------------------------------ */
-let socialLoaded = false;
+/* --------------------------------- social --------------------------------- */
+function armSocial(unit) {
+  let done = false;
+  const fire = () => { if (done) return; done = true; loadScript(unit.src); };
 
-function mountSocial() {
-  if (socialLoaded) return;
-  socialLoaded = true;
-  loadScript(SOCIAL);
-}
-
-function armSocial() {
-  // Only a REAL scroll counts — layout can emit a scroll event at scrollY 0 on
-  // load, which was firing this after ~1s instead of the intended delay.
+  // a real scroll only — layout emits scroll at scrollY 0 on load
   const onScroll = () => {
     if (window.scrollY < 150) return;
     removeEventListener('scroll', onScroll);
-    mountSocial();
+    fire();
   };
   addEventListener('scroll', onScroll, { passive: true });
-  setTimeout(mountSocial, SOCIAL_DELAY);
+  setTimeout(fire, SOCIAL_DELAY);
 }
 
-/* ------------------------------- 3. popunder ------------------------------- */
-let popunderLoaded = false;
-let clickCount = 0;
-
-function mountPopunder() {
-  if (popunderLoaded) return;
-  popunderLoaded = true;
-  loadScript(POPUNDER);
+/* --------------------------------- static --------------------------------- */
+function mountStatic(unit) {
+  const slot = document.getElementById('ad-slot');
+  if (!slot) return;
+  const box = document.createElement('div');
+  box.id = unit.containerId || '';
+  box.className = 'ad-box';
+  slot.appendChild(box);
+  loadScript(unit.src);
 }
 
-function countClick(e) {
-  if (e.button !== undefined && e.button !== 0) return;   // left click only
-  const el = e.target;
-  if (!el || !el.closest) return;
-  // never from inside the player: seeking or changing volume is the worst
-  // possible moment for a tab to open
-  if (el.closest('.modal')) return;
+/* -------------------------------- popunder -------------------------------- */
+function armPopunder(unit) {
+  let fired = false;
+  let clicks = 0;
 
-  clickCount++;
-  if (clickCount >= CLICK_THRESHOLD) mountPopunder();
-}
+  addEventListener('click', (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    const el = e.target;
+    if (!el || !el.closest) return;
+    if (el.closest('.modal')) return;          // never while watching
 
-function armPopunder() {
-  addEventListener('click', countClick, true);
+    clicks++;
+    if (clicks >= CLICK_THRESHOLD && !fired) {
+      fired = true;
+      loadScript(unit.src);
+      log('popunder: armed after', clicks, 'clicks');
+    }
+  }, true);
 }
 
 /* ---------------------------------- start ---------------------------------- */
 function start() {
-  mountNative();
-  armSocial();
-  armPopunder();
+  const units = validate(UNITS);
+  for (const u of units) {
+    if (u.kind === 'native') mountNative(u);
+    else if (u.kind === 'static') mountStatic(u);
+    else if (u.kind === 'social') armSocial(u);
+    else if (u.kind === 'popunder') armPopunder(u);
+  }
+  log('units active:', units.map((u) => u.kind).join(', '));
 }
 
 if (document.readyState === 'loading') {
