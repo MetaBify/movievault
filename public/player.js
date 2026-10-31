@@ -38,12 +38,34 @@ const MAX_AUTO_HOPS = 4;       // fall through at most this many dead sources
  */
 const SANDBOX_POLICY = 'allow-scripts allow-same-origin allow-forms allow-presentation';
 
-function sandboxEnabled() {
-  return localStorage.getItem('mv:sandbox') !== 'off';   // on by default
+/* Some players detect the sandbox itself and refuse to start ("unsupported
+ * sandbox environment"). They can do that because blocking window.open is
+ * observable — the missing capability IS the tell. There is no way to keep the
+ * popup block and look normal.
+ *
+ * So protection is global, with a per-source exemption list: one stubborn
+ * player opts out, everything else stays locked down.
+ */
+function sandboxGloballyOn() {
+  return localStorage.getItem('mv:sandbox') !== 'off';
 }
 
-function applySandbox(iframe) {
-  if (sandboxEnabled()) iframe.setAttribute('sandbox', SANDBOX_POLICY);
+function sandboxOffSources() {
+  try { return JSON.parse(localStorage.getItem('mv:sandboxOff') || '[]'); } catch { return []; }
+}
+
+function setSandboxForSource(id, on) {
+  const list = sandboxOffSources().filter((x) => x !== id);
+  if (!on) list.push(id);
+  localStorage.setItem('mv:sandboxOff', JSON.stringify(list));
+}
+
+function sandboxEnabledFor(sourceId) {
+  return sandboxGloballyOn() && !sandboxOffSources().includes(sourceId);
+}
+
+function applySandbox(iframe, sourceId) {
+  if (sandboxEnabledFor(sourceId)) iframe.setAttribute('sandbox', SANDBOX_POLICY);
   else iframe.removeAttribute('sandbox');
 }
 
@@ -127,6 +149,10 @@ export function playItem(item) {
           <input type="checkbox" id="pauto" ${localStorage.getItem('mv:autorotate') !== 'off' ? 'checked' : ''}>
           skip dead sources
         </label>
+        <label class="auto-lbl" title="Blocks this source from opening ad tabs. Turn off only if the player says 'sandbox detected'.">
+          <input type="checkbox" id="psandbox" checked>
+          block popups
+        </label>
         <select id="psrc" aria-label="Source"></select>
       </div>
       <div class="p-hint" id="phint">
@@ -157,6 +183,7 @@ export function playItem(item) {
   const sel = wrap.querySelector('#psrc');
   const status = wrap.querySelector('#pstatus');
   const autoBox = wrap.querySelector('#pauto');
+  const sandboxBox = wrap.querySelector('#psandbox');
 
   const ordered = orderSources(SOURCES);
   const override = userOverride();
@@ -177,6 +204,8 @@ export function playItem(item) {
     idx = (i + ordered.length) % ordered.length;
     const s = ordered[idx];
     sel.value = s.id;
+    // reflect this source's sandbox state (they differ per source)
+    if (sandboxBox) sandboxBox.checked = sandboxEnabledFor(s.id);
 
     frame.innerHTML = `<div class="spin">loading ${esc(s.name)}…</div>`;
     setStatus(`${s.name}${reason ? ' · ' + reason : ''}`, '');
@@ -214,7 +243,7 @@ export function playItem(item) {
     iframe.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
     iframe.allowFullscreen = true;
     iframe.referrerPolicy = 'origin';
-    applySandbox(iframe);
+    applySandbox(iframe, s.id);
 
     let loaded = false;
     iframe.onload = () => {
@@ -251,6 +280,17 @@ export function playItem(item) {
   };
 
   autoBox.onchange = () => localStorage.setItem('mv:autorotate', autoBox.checked ? 'on' : 'off');
+
+  // Per-source popup block. Turning it off for one server doesn't weaken the
+  // others — that's the point: only the stubborn player opts out.
+  if (sandboxBox) {
+    sandboxBox.onchange = () => {
+      const s = ordered[idx];
+      setSandboxForSource(s.id, sandboxBox.checked);
+      hops = 0;
+      load(idx, sandboxBox.checked ? 'popups blocked' : 'popups allowed');
+    };
+  }
 
   // live remap: re-request the same source with different numbering
   const rNow = wrap.querySelector('#rNow');
