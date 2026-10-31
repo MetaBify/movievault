@@ -14,6 +14,10 @@ const load = (html) => { view.innerHTML = html; initStrips(view); };
 
 /* --------------------------------- router -------------------------------- */
 async function route() {
+  // Any navigation closes the player. Otherwise the modal stays on top of the
+  // page and the site looks frozen — clicking a nav link did nothing visible.
+  document.querySelectorAll('.modal').forEach((m) => m.remove());
+
   const h = location.hash.replace(/^#\/?/, '');
   const [path, query] = h.split('?');
   const p = new URLSearchParams(query || '');
@@ -410,9 +414,20 @@ function settings() {
   const override = localStorage.getItem('mv:source');
   const fails = stats();
   const autorotate = localStorage.getItem('mv:autorotate') === 'on';
+  const sandbox = localStorage.getItem('mv:sandbox') !== 'off';
   load(`
     <h1 class="page-title">Settings</h1>
     <div class="settings">
+      <div class="srow">
+        <div>
+          <strong>Block popups from video sources</strong>
+          <p>Runs every player in a sandbox that forbids <code>window.open</code>, top-level
+             redirects and modals — so the embeds can't throw ad tabs at you.
+             Some sources need popups for their own menus and will stop working;
+             turn this off if a source misbehaves.</p>
+        </div>
+        <label class="switch"><input type="checkbox" id="setSandbox" ${sandbox ? 'checked' : ''}><span></span></label>
+      </div>
       <div class="srow">
         <div>
           <strong>Skip dead sources</strong>
@@ -442,6 +457,15 @@ function settings() {
     </div>`);
 
   $('#setAuto').onchange = (e) => localStorage.setItem('mv:autorotate', e.target.checked ? 'on' : 'off');
+  $('#setSandbox').onchange = (e) => {
+    localStorage.setItem('mv:sandbox', e.target.checked ? 'on' : 'off');
+    // live: rebuild the frame if a player is already open
+    document.querySelectorAll('.modal iframe').forEach((f) => {
+      if (e.target.checked) f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-presentation');
+      else f.removeAttribute('sandbox');
+      f.src = f.src;   // reload so the sandbox takes effect
+    });
+  };
   $('#unpin')?.addEventListener('click', () => { setOverride(null); settings(); });
   $('#clearFails').onclick = () => { clearHistory(); setOverride(null); settings(); };
   $('#clearWatch').onclick = () => { clearWatchHistory(); settings(); };

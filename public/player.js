@@ -16,6 +16,37 @@ import { record } from './history.js';
 const LOAD_DEADLINE = 15000;   // only matters if the frame never fires `load`
 const MAX_AUTO_HOPS = 4;       // fall through at most this many dead sources
 
+/* Sandbox policy for the video iframes.
+ *
+ * The embeds are third-party players that try to open popunder tabs. Blocking
+ * them from the parent page is impossible — it's their iframe — so we constrain
+ * the iframe itself:
+ *
+ *   allow-scripts        they are JS players, without this nothing runs
+ *   allow-same-origin    most players need storage/DRM to work at all
+ *   allow-forms          some login/subtitle flows post forms
+ *   allow-presentation   casting / remote playback
+ *
+ * Deliberately ABSENT:
+ *   allow-popups             <- this is what stops the ad tabs
+ *   allow-popups-to-escape-sandbox
+ *   allow-top-navigation     <- stops them redirecting the whole site
+ *   allow-modals             <- stops alert() spam
+ *
+ * Some players genuinely need popups for their own UI and will break under
+ * this, which is why it's a setting and not hardcoded.
+ */
+const SANDBOX_POLICY = 'allow-scripts allow-same-origin allow-forms allow-presentation';
+
+function sandboxEnabled() {
+  return localStorage.getItem('mv:sandbox') !== 'off';   // on by default
+}
+
+function applySandbox(iframe) {
+  if (sandboxEnabled()) iframe.setAttribute('sandbox', SANDBOX_POLICY);
+  else iframe.removeAttribute('sandbox');
+}
+
 /* Server-side availability probe. Only *conclusive* negatives are actionable:
  * a hard 404 or a page containing a "not found" marker. Everything else
  * (timeout, DNS, or a generic shell) is treated as "unknown — try it", because
@@ -177,11 +208,13 @@ export function playItem(item) {
     const url = req.season
       ? s.tv({ ...item, season: req.season, episode: req.episode })
       : s.url(item);
+
     const iframe = document.createElement('iframe');
     iframe.src = url;
     iframe.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
     iframe.allowFullscreen = true;
     iframe.referrerPolicy = 'origin';
+    applySandbox(iframe);
 
     let loaded = false;
     iframe.onload = () => {
