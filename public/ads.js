@@ -1,122 +1,120 @@
-/* ADS — integration for the profitableratecpmnetwork units.
+/* ADS — three units, three different behaviours.
  *
- * Three units, two behaviours:
- *   1. invoke.js + container  -> display ad, renders in place
- *   2. two bare script tags   -> popunder/interstitial (no container of their own)
+ *   1. NATIVE BANNER   invoke.js + container div  → renders inline in the slot
+ *   2. SOCIAL BAR      pl32120990...              → self-injecting floating bar
+ *   3. POPUNDER        pl32120991...              → opens a tab on click
  *
- * Integration choices, so this doesn't wreck the site:
- *   - The display unit lives in its own slot OUTSIDE #view, so SPA navigation
- *     never destroys it and it never appears inside the player modal.
- *   - The popunder scripts are deferred until the first real user interaction.
- *     Loading them on page load fires them at bounce-time, which both annoys
- *     people and wastes the impression.
- *   - If the slot renders nothing (ad blocker), it collapses instead of leaving
- *     a hole in the layout.
+ * Each gets its own timing, because lumping them together either fires the
+ * popunder too early or holds back the banners that are actually harmless:
+ *
+ *   native  → immediately, in its own slot outside #view so SPA navigation
+ *             doesn't destroy it and it never lands inside the player
+ *   social  → once the page settles (scroll or 4s); it's an overlay, so it
+ *             needs the page to exist before it can attach itself
+ *   popunder→ only after CLICK_THRESHOLD real clicks, and never from inside
+ *             the player
  */
 
-const DISPLAY = {
+const NATIVE = {
   containerId: 'container-eb1df166ccaa6ef7da59114eeb1b0ad6',
   src: 'https://pl32120989.profitableratecpmnetwork.com/eb1df166ccaa6ef7da59114eeb1b0ad6/invoke.js',
 };
 
-const POPUNDERS = [
-  'https://pl32120990.profitableratecpmnetwork.com/30/5a/93/305a93a513dbd446ff4799fa5fdcc90a.js',
-  'https://pl32120991.profitableratecpmnetwork.com/b5/99/ae/b599aecc21374b780d2edfaa14996c54.js',
-];
+const SOCIAL = 'https://pl32120990.profitableratecpmnetwork.com/30/5a/93/305a93a513dbd446ff4799fa5fdcc90a.js';
 
-function loadScript(src, { async = true, onload, onerror } = {}) {
+const POPUNDER = 'https://pl32120991.profitableratecpmnetwork.com/b5/99/ae/b599aecc21374b780d2edfaa14996c54.js';
+
+const CLICK_THRESHOLD = 8;     // clicks before the popunder arms
+const SOCIAL_DELAY = 4000;     // ms before the social bar may load
+
+function loadScript(src, { onerror } = {}) {
   const s = document.createElement('script');
   s.src = src;
-  s.async = async;
+  s.async = true;
   s.setAttribute('data-cfasync', 'false');
-  if (onload) s.onload = onload;
   if (onerror) s.onerror = onerror;
   document.body.appendChild(s);
   return s;
 }
 
-/* ------------------------------- display unit ------------------------------ */
-function mountDisplay() {
+/* ----------------------------- 1. native banner ---------------------------- */
+function mountNative() {
   const slot = document.getElementById('ad-slot');
   if (!slot) return;
-
-  const box = document.createElement('div');
-  box.id = DISPLAY.containerId;
-  box.className = 'ad-box';
 
   const label = document.createElement('span');
   label.className = 'ad-label';
   label.textContent = 'Advertisement';
 
+  const box = document.createElement('div');
+  box.id = NATIVE.containerId;
+  box.className = 'ad-box';
+
   slot.append(label, box);
 
-  loadScript(DISPLAY.src, {
+  loadScript(NATIVE.src, {
     onerror: () => slot.classList.remove('on'),
   });
 
-  // give the network a moment; if nothing rendered (blocked/filled=none),
-  // collapse so there's no empty gap in the page
+  // collapse if nothing filled (ad blocker or no inventory) — no empty hole
   setTimeout(() => {
     const filled = box.childElementCount > 0 || box.innerHTML.trim().length > 0;
     slot.classList.toggle('on', filled);
   }, 2500);
 }
 
-/* ------------------------------ popunder units -----------------------------
- * NOT loaded on first click anymore — that fires a tab before the visitor has
- * seen anything. Instead: count real clicks, load once the threshold is hit.
- * So a casual visitor (2-5 clicks) never gets one, and someone actually using
- * the site (watching, browsing) gets a single popunder per session.
- */
-const CLICK_THRESHOLD = 8;      // clicks before the first popunder arms
-const SECOND_LOAD_AFTER = 25;   // one more much later, never more
+/* ------------------------------ 2. social bar ------------------------------ */
+let socialLoaded = false;
 
+function mountSocial() {
+  if (socialLoaded) return;
+  socialLoaded = true;
+  loadScript(SOCIAL);
+}
+
+function armSocial() {
+  // Only a REAL scroll counts — layout can emit a scroll event at scrollY 0 on
+  // load, which was firing this after ~1s instead of the intended delay.
+  const onScroll = () => {
+    if (window.scrollY < 150) return;
+    removeEventListener('scroll', onScroll);
+    mountSocial();
+  };
+  addEventListener('scroll', onScroll, { passive: true });
+  setTimeout(mountSocial, SOCIAL_DELAY);
+}
+
+/* ------------------------------- 3. popunder ------------------------------- */
+let popunderLoaded = false;
 let clickCount = 0;
-let loads = 0;
 
-function isRealClick(e) {
-  const el = e.target;
-  if (!el || !el.closest) return false;
-  // ignore clicks inside the player — a popunder while seeking or adjusting
-  // volume is the worst possible moment
-  if (el.closest('.modal')) return false;
-  return true;
+function mountPopunder() {
+  if (popunderLoaded) return;
+  popunderLoaded = true;
+  loadScript(POPUNDER);
 }
 
-function maybeLoad() {
-  if (loads === 0 && clickCount >= CLICK_THRESHOLD) {
-    loads = 1;
-    for (const src of POPUNDERS) loadScript(src);
-    return;
-  }
-  if (loads === 1 && clickCount >= CLICK_THRESHOLD + SECOND_LOAD_AFTER) {
-    loads = 2;
-    // second impression, much later in the session
-    loadScript(POPUNDERS[0]);
-  }
-}
-
-function onClick(e) {
+function countClick(e) {
   if (e.button !== undefined && e.button !== 0) return;   // left click only
-  if (!isRealClick(e)) return;
+  const el = e.target;
+  if (!el || !el.closest) return;
+  // never from inside the player: seeking or changing volume is the worst
+  // possible moment for a tab to open
+  if (el.closest('.modal')) return;
+
   clickCount++;
-  maybeLoad();
+  if (clickCount >= CLICK_THRESHOLD) mountPopunder();
 }
 
-function armPopunders() {
-  // capture phase so SPA handlers can't stop it
-  addEventListener('click', onClick, true);
-  addEventListener('touchstart', (e) => {
-    if (!isRealClick(e)) return;
-    clickCount++;
-    maybeLoad();
-  }, { capture: true, passive: true });
+function armPopunder() {
+  addEventListener('click', countClick, true);
 }
 
-
+/* ---------------------------------- start ---------------------------------- */
 function start() {
-  mountDisplay();
-  armPopunders();
+  mountNative();
+  armSocial();
+  armPopunder();
 }
 
 if (document.readyState === 'loading') {
