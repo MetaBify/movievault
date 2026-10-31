@@ -414,17 +414,18 @@ function settings() {
   const override = localStorage.getItem('mv:source');
   const fails = stats();
   const autorotate = localStorage.getItem('mv:autorotate') === 'on';
-  const sandbox = localStorage.getItem('mv:sandbox') !== 'off';
+  const sandbox = localStorage.getItem('mv:sandbox') === 'on';
   load(`
     <h1 class="page-title">Settings</h1>
     <div class="settings">
       <div class="srow">
         <div>
           <strong>Block popups from video sources</strong>
-          <p>Runs every player in a sandbox that forbids <code>window.open</code>, top-level
-             redirects and modals — so the embeds can't throw ad tabs at you.
-             Some sources need popups for their own menus and will stop working;
-             turn this off if a source misbehaves.</p>
+          <p><b>Off by default.</b> When on, players run in a sandbox that forbids
+             <code>window.open</code>, top-level redirects and modals, so embeds can't
+             throw ad tabs at you. The catch: some players detect the sandbox and
+             refuse to start, so it's opt-in. You can also enable it per source
+             from the player bar.</p>
         </div>
         <label class="switch"><input type="checkbox" id="setSandbox" ${sandbox ? 'checked' : ''}><span></span></label>
       </div>

@@ -47,21 +47,38 @@ const SANDBOX_POLICY = 'allow-scripts allow-same-origin allow-forms allow-presen
  * player opts out, everything else stays locked down.
  */
 function sandboxGloballyOn() {
-  return localStorage.getItem('mv:sandbox') !== 'off';
+  // OFF by default: several embeds detect the sandbox and refuse to start, and a
+  // dead player is worse than an extra tab. Opt in per device, or per source.
+  return localStorage.getItem('mv:sandbox') === 'on';
 }
 
-function sandboxOffSources() {
-  try { return JSON.parse(localStorage.getItem('mv:sandboxOff') || '[]'); } catch { return []; }
-}
+const readList = (k) => { try { return JSON.parse(localStorage.getItem(k) || '[]'); } catch { return []; } };
+const writeList = (k, v) => localStorage.setItem(k, JSON.stringify([...new Set(v)]));
 
-function setSandboxForSource(id, on) {
-  const list = sandboxOffSources().filter((x) => x !== id);
-  if (!on) list.push(id);
-  localStorage.setItem('mv:sandboxOff', JSON.stringify(list));
-}
-
+/** Per-source override wins over the global default, in both directions. */
 function sandboxEnabledFor(sourceId) {
-  return sandboxGloballyOn() && !sandboxOffSources().includes(sourceId);
+  if (!sourceId) return sandboxGloballyOn();
+  if (readList('mv:sandboxOff').includes(sourceId)) return false;
+  if (readList('mv:sandboxOn').includes(sourceId)) return true;
+  return sandboxGloballyOn();
+}
+
+/** Stores an override only when it differs from the global default. */
+function setSandboxForSource(id, enabled) {
+  const global = sandboxGloballyOn();
+  let on = readList('mv:sandboxOn').filter((x) => x !== id);
+  let off = readList('mv:sandboxOff').filter((x) => x !== id);
+
+  if (enabled === global) {
+    // matches the default again — no override needed
+  } else if (enabled) {
+    on.push(id);
+  } else {
+    off.push(id);
+  }
+
+  writeList('mv:sandboxOn', on);
+  writeList('mv:sandboxOff', off);
 }
 
 function applySandbox(iframe, sourceId) {
