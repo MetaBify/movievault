@@ -62,30 +62,57 @@ function mountDisplay() {
   }, 2500);
 }
 
-/* ------------------------------ popunder units ----------------------------- */
-let popundersLoaded = false;
+/* ------------------------------ popunder units -----------------------------
+ * NOT loaded on first click anymore — that fires a tab before the visitor has
+ * seen anything. Instead: count real clicks, load once the threshold is hit.
+ * So a casual visitor (2-5 clicks) never gets one, and someone actually using
+ * the site (watching, browsing) gets a single popunder per session.
+ */
+const CLICK_THRESHOLD = 8;      // clicks before the first popunder arms
+const SECOND_LOAD_AFTER = 25;   // one more much later, never more
 
-function mountPopunders() {
-  if (popundersLoaded) return;
-  popundersLoaded = true;
-  for (const src of POPUNDERS) loadScript(src);
+let clickCount = 0;
+let loads = 0;
+
+function isRealClick(e) {
+  const el = e.target;
+  if (!el || !el.closest) return false;
+  // ignore clicks inside the player — a popunder while seeking or adjusting
+  // volume is the worst possible moment
+  if (el.closest('.modal')) return false;
+  return true;
 }
 
-function onFirstInteraction() {
-  mountPopunders();
-  removeEventListener('pointerdown', onFirstInteraction, true);
-  removeEventListener('keydown', onFirstInteraction, true);
-  removeEventListener('touchstart', onFirstInteraction, true);
+function maybeLoad() {
+  if (loads === 0 && clickCount >= CLICK_THRESHOLD) {
+    loads = 1;
+    for (const src of POPUNDERS) loadScript(src);
+    return;
+  }
+  if (loads === 1 && clickCount >= CLICK_THRESHOLD + SECOND_LOAD_AFTER) {
+    loads = 2;
+    // second impression, much later in the session
+    loadScript(POPUNDERS[0]);
+  }
+}
+
+function onClick(e) {
+  if (e.button !== undefined && e.button !== 0) return;   // left click only
+  if (!isRealClick(e)) return;
+  clickCount++;
+  maybeLoad();
 }
 
 function armPopunders() {
-  addEventListener('pointerdown', onFirstInteraction, true);
-  addEventListener('keydown', onFirstInteraction, true);
-  addEventListener('touchstart', onFirstInteraction, true);
-
-  // safety net: if nobody interacts within 30s, load them anyway
-  setTimeout(mountPopunders, 30000);
+  // capture phase so SPA handlers can't stop it
+  addEventListener('click', onClick, true);
+  addEventListener('touchstart', (e) => {
+    if (!isRealClick(e)) return;
+    clickCount++;
+    maybeLoad();
+  }, { capture: true, passive: true });
 }
+
 
 function start() {
   mountDisplay();
